@@ -23,7 +23,8 @@ from typing import Deque, Dict, List, Optional
 import jwt
 import requests
 from fastapi import Depends, FastAPI, HTTPException, Request, Header, WebSocket, WebSocketDisconnect, status
-from fastapi.responses import StreamingResponse, JSONResponse
+from fastapi.responses import StreamingResponse, JSONResponse, HTMLResponse, FileResponse
+from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from dotenv import load_dotenv
@@ -91,6 +92,15 @@ app.include_router(whisper_router)
 telemetry_client = get_telemetry_client()
 emotion_ai_worker = EmotionAIWorker() if ENABLE_EMOTION_AI_P1 else None
 role_registry = RoleRegistry()
+
+FRONTEND_DIST = project_root / "frontend" / "dist"
+if FRONTEND_DIST.exists():
+    assets_dir = FRONTEND_DIST / "assets"
+    if assets_dir.exists():
+        app.mount("/assets", StaticFiles(directory=assets_dir), name="frontend-assets")
+    static_dir = FRONTEND_DIST / "static"
+    if static_dir.exists():
+        app.mount("/static", StaticFiles(directory=static_dir), name="frontend-static")
 
 
 @app.on_event("startup")
@@ -1212,16 +1222,34 @@ class LingyaGatewayMultiRole:
         self.remote_cache_text = ""
         self.partial_transcript.clear()
         self.phase = "closed"
-@app.get("/")
+@app.get("/", response_class=HTMLResponse)
 async def root():
-    """根路徑"""
-    return {
-        "message": "黃蓉語音系統 API v2.0",
-        "endpoints": {
-            "POST /api/voice/huangrong": "產生語音並回傳 URL",
-            "POST /api/voice/huangrong/stream": "直接返回音訊流"
-        }
-    }
+    """Serve frontend UI if Vite dist exists, otherwise fallback to API description."""
+    if FRONTEND_DIST.exists():
+        index_path = FRONTEND_DIST / "index.html"
+        if index_path.exists():
+            return index_path.read_text(encoding="utf-8")
+    return HTMLResponse(
+        content=json.dumps(
+            {
+                "message": "黃蓉語音系統 API v2.0",
+                "endpoints": {
+                    "POST /api/voice/huangrong": "產生語音並回傳 URL",
+                    "POST /api/voice/huangrong/stream": "直接返回音訊流",
+                },
+            },
+            ensure_ascii=False,
+        ),
+        media_type="application/json",
+    )
+
+
+@app.get("/favicon.ico")
+async def favicon():
+    favicon_path = FRONTEND_DIST / "favicon.ico"
+    if favicon_path.exists():
+        return FileResponse(favicon_path)
+    return JSONResponse(status_code=404, content={"detail": "Not Found"})
 
 
 @app.post(
